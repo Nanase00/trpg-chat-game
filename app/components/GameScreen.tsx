@@ -31,13 +31,10 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
   const [showOptions, setShowOptions] = useState(false)
   const [animationPhase, setAnimationPhase] = useState<'idle' | 'tableTalk' | 'story' | 'options' | 'done'>('idle')
   
-  // AIから受け取った未表示のデータキュー
   const [pendingTableTalk, setPendingTableTalk] = useState<Array<{ speaker: string; text: string; gender?: 'male' | 'female' | 'gm' }>>([])
-  
-  // 現在画面に表示中の会話（タイプライター用）
   const [displayedTableTalk, setDisplayedTableTalk] = useState<Array<{ speaker: string; text: string; gender?: 'male' | 'female' | 'gm'; displayedText: string; isTyping: boolean }>>([])
   
-  // ★重要: handleUserInput内で最新のstateを参照するためのRef
+  // ★重要: ループ防止用のRef
   const displayedTableTalkRef = useRef(displayedTableTalk);
 
   const [displayedStory, setDisplayedStory] = useState('')
@@ -46,12 +43,11 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null)
   const [isFirstIntroduction, setIsFirstIntroduction] = useState(true)
 
-  // Refの同期
   useEffect(() => {
     displayedTableTalkRef.current = displayedTableTalk;
   }, [displayedTableTalk]);
   
-  // タイプライターアニメーション用のref
+  // アニメーション用Ref
   const tableTalkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const storyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const optionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,7 +68,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     }))
   }, [])
 
-  // imagePromptを使用して画像を生成
   const generateImageFromPrompt = useCallback(async (imagePrompt: string) => {
     if (!GAME_CONFIG.ENABLE_AI_IMAGES || !imagePrompt) return;
     if (imageCacheRef.current[imagePrompt]) {
@@ -98,7 +93,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     }
   }, []);
 
-  // ユーザー入力ハンドラ（ここを修正してループを解消）
   const handleUserInput = useCallback(async (input: string, isOptionSelection: boolean = false) => {
     if (!input.trim() || isLoading) return
     
@@ -106,10 +100,8 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     setShowOptions(false)
     setUserInput('')
 
-    // 1. 現在表示されている会話（displayedTableTalk）を取得して過去ログへ移動
+    // 1. 表示中の会話をアーカイブ
     const currentTalk = displayedTableTalkRef.current;
-    
-    // 現在の会話がない場合（初回など）は空配列
     const messagesToArchive: GameMessage[] = currentTalk.map((talk, index) => ({
       id: `archived-${Date.now()}-${index}`,
       speaker: talk.speaker === 'GM' ? 'gm' : (talk.speaker === playerName ? 'user' : 'gm'),
@@ -119,12 +111,11 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       gender: talk.gender,
     }));
 
-    // 2. ユーザーの新しい発言を作成
+    // 2. 新規メッセージ作成
     let userNewMessage: GameMessage | null = null;
     let newDisplayedTalk: typeof displayedTableTalk = [];
 
     if (isOptionSelection) {
-      // 選択肢を選んだ場合：ユーザーの発言として「現在の会話エリア」に表示（まだアーカイブしない）
       newDisplayedTalk = [{
         speaker: playerName,
         text: input,
@@ -133,7 +124,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
         gender: undefined,
       }];
     } else if (input !== 'start') {
-      // 自由入力の場合：即座に過去ログに含める
       userNewMessage = {
         id: `user-${Date.now()}`,
         speaker: 'user',
@@ -143,13 +133,11 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       };
     }
 
-    // 3. 状態を一括更新（アーカイブ追加 ＋ 新規ユーザー発言追加）
+    // 3. 状態更新（重複防止付き）
     setGameState(prev => {
-      // 重複チェック: 念のため、直前のメッセージと同じIDや内容が連続して追加されないようにする
       const lastMsg = prev.messages[prev.messages.length - 1];
       const newArchive = messagesToArchive.filter(m => {
           if (!lastMsg) return true;
-          // 内容と名前が完全に一致する直近のメッセージがある場合は追加しない（簡易的な重複防止）
           return !(lastMsg.name === m.name && lastMsg.message === m.message);
       });
 
@@ -157,22 +145,14 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       if (userNewMessage) {
         newMessages.push(userNewMessage);
       }
-      return {
-        ...prev,
-        messages: newMessages
-      };
+      return { ...prev, messages: newMessages };
     });
 
-    // 4. 表示エリアをリセット（選択肢の場合はそれをセット、それ以外は空に）
     setDisplayedTableTalk(newDisplayedTalk);
 
     try {
-      // API呼び出し用の履歴作成
-      // 注意: state更新は非同期なので、ここでは計算済みの値を使う
       const historySource = [...gameState.messages, ...messagesToArchive];
       if (userNewMessage) historySource.push(userNewMessage);
-
-      // 直近20件くらいに制限して送る（トークン節約＆ループ防止）
       const recentHistory = historySource.slice(-20).map(m => ({ speaker: m.speaker, name: m.name, message: m.message }));
       
       const res = await fetch('/api/game', {
@@ -184,7 +164,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       if (!res.ok) throw new Error('API Error');
       const response = await res.json();
 
-      // --- 画像生成判定 ---
       const isFirstMessage = input === 'start' || gameState.messages.length === 0
       const storyText = response.story || ''
       const isEnding = storyText.includes('エピローグ') || storyText.includes('エンディング') || storyText.includes('最終話')
@@ -195,7 +174,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
         }
       }
 
-      // --- 自己紹介完了判定 ---
       const isUserIntroductionInput = input !== 'start' && (
         input.includes('名乗る') || input.includes('挨拶') || input.includes('自己紹介') || input.includes('生徒会')
       )
@@ -206,14 +184,12 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
         setIsFirstIntroduction(false)
       }
 
-      // --- レスポンス反映 ---
       setGameState(prev => ({
         ...prev,
         fieldStory: response.story,
         options: response.options
       }))
 
-      // アニメーション用リセット
       currentTableTalkIndexRef.current = 0
       currentTableTalkCharIndexRef.current = 0
       currentStoryCharIndexRef.current = 0
@@ -239,12 +215,9 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     }
   }, [playerName, worldSetting, gameState.messages, isLoading, addMessage, generateImageFromPrompt, isFirstIntroduction]);
 
-  // --- 以下、アニメーション系useEffect ---
-
-  // テーブルトークのタイプライター
+  // アニメーションuseEffect群
   useEffect(() => {
     if (animationPhase !== 'tableTalk' || pendingTableTalk.length === 0) return
-
     if (tableTalkTimeoutRef.current) clearTimeout(tableTalkTimeoutRef.current)
 
     const animate = () => {
@@ -261,7 +234,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       const fullText = currentMessage.text || ''
 
       if (charIdx === 0) {
-        // 新しいメッセージの開始時は、配列に追加する
         setDisplayedTableTalk(prev => [
           ...prev,
           {
@@ -307,7 +279,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     return () => { if (tableTalkTimeoutRef.current) clearTimeout(tableTalkTimeoutRef.current) }
   }, [animationPhase, pendingTableTalk])
 
-  // フィールド（Story）のタイプライター
   useEffect(() => {
     if (animationPhase !== 'story' || !gameState.fieldStory) return
     if (storyTimeoutRef.current) clearTimeout(storyTimeoutRef.current)
@@ -331,7 +302,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     return () => { if (storyTimeoutRef.current) clearTimeout(storyTimeoutRef.current) }
   }, [animationPhase, gameState.fieldStory])
 
-  // 選択肢のタイプライター
   useEffect(() => {
     if (animationPhase !== 'options' || gameState.options.length === 0) return
     if (optionsTimeoutRef.current) clearTimeout(optionsTimeoutRef.current)
@@ -435,8 +405,22 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       </div>
 
       <div className={`relative z-10 flex flex-col h-full gap-2 md:gap-4 transition-opacity ${isUiHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        {/* メインレイアウトコンテナ */}
         <div className="flex-1 flex flex-col md:flex-row gap-2 md:gap-4 min-h-0">
-          <div className="order-2 md:order-1 flex-[0.6] md:flex-[0.35] min-h-0 flex flex-col bg-black/20 rounded overflow-hidden">
+          
+          {/* 【レイアウト修正ポイント】
+            スマホ(default): 
+              - flex-col
+              - TableTalk (上) -> order-1, flex-[0.35] (高さ35%)
+              - Field+Options (下) -> order-2, flex-[0.65] (高さ65%)
+            PC(md): 
+              - flex-row
+              - TableTalk (左) -> order-1, flex-[0.35] (幅35%)
+              - Field+Options (右) -> order-2, flex-[0.65] (幅65%)
+          */}
+
+          {/* 1. テーブルトーク (上/左) */}
+          <div className="order-1 md:order-1 flex-[0.35] md:flex-[0.35] min-h-0 flex flex-col bg-black/20 rounded overflow-hidden">
              <TableTalk 
                messages={gameState.messages} 
                displayedTableTalk={displayedTableTalk} 
@@ -444,10 +428,14 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
                playerName={playerName} 
              />
           </div>
-          <div className="order-1 md:order-2 flex-[0.4] md:flex-[0.65] flex flex-col gap-2 min-h-0">
+
+          {/* 2. フィールド & 選択肢 (下/右) */}
+          <div className="order-2 md:order-2 flex-[0.65] md:flex-[0.65] flex flex-col gap-2 min-h-0">
+            {/* フィールド: 残りのスペースを全て使う (flex-1) */}
             <div className="flex-1 min-h-0 overflow-y-auto">
                 <GameField displayedStory={displayedStory} animationPhase={animationPhase as any} imageUrl={null} isGeneratingImage={isGeneratingImage} />
             </div>
+            {/* 選択肢 & 入力: 下部に配置 */}
             <div className="mt-auto flex flex-col gap-2 p-1">
                <div className={`${showOptions ? 'opacity-100' : 'opacity-0'} transition-opacity`}>
                  <GameOptions 
