@@ -6,9 +6,17 @@ interface GameOptionsProps {
   isLoading: boolean
   animationPhase?: 'idle' | 'tableTalk' | 'story' | 'options' | 'done'
   originalOptions?: string[]
+  displayedOptions?: Array<{ text: string; displayedText: string; isTyping: boolean }>
 }
 
-export default function GameOptions({ options, onSelect, isLoading, animationPhase = 'idle', originalOptions = [] }: GameOptionsProps) {
+export default function GameOptions({ 
+  options, 
+  onSelect, 
+  isLoading, 
+  animationPhase = 'idle', 
+  originalOptions = [],
+  displayedOptions = []
+}: GameOptionsProps) {
   if (isLoading) {
     return (
       <div className="p-4 bg-dark-surface border-2 border-dark-border rounded-lg">
@@ -17,7 +25,7 @@ export default function GameOptions({ options, onSelect, isLoading, animationPha
     )
   }
 
-  if (options.length === 0) {
+  if (options.length === 0 && displayedOptions.length === 0) {
     return null
   }
 
@@ -27,12 +35,11 @@ export default function GameOptions({ options, onSelect, isLoading, animationPha
     <div className="space-y-2">
       <h3 className="text-sm font-semibold text-dark-muted mb-2">選択肢:</h3>
       <div className="grid gap-2">
-        {options.map((option, index) => {
-          const originalOpt = originalOptions[index] || option
-          // 現在タイプライター中の選択肢かどうか（アニメーション中で、まだ完全に表示されていない場合）
-          const isCurrentTyping = isTyping && option.length < originalOpt.length
-          // この選択肢が完全に表示されているかどうか
-          const isFullyDisplayed = !isTyping || option.length >= originalOpt.length
+        {(displayedOptions.length > 0 ? displayedOptions : options.map((opt, idx) => ({ text: opt, displayedText: opt, isTyping: false }))).map((displayedOpt, index) => {
+          const originalOpt = originalOptions[index] || displayedOpt.text
+          const displayText = displayedOpt.displayedText || displayedOpt.text
+          const isCurrentTyping = displayedOpt.isTyping
+          const isFullyDisplayed = !isCurrentTyping
           
           return (
             <button
@@ -41,8 +48,10 @@ export default function GameOptions({ options, onSelect, isLoading, animationPha
               disabled={isTyping && !isFullyDisplayed}
               className="px-4 py-3 bg-dark-surface border-2 border-dark-border rounded-lg text-dark-text hover:border-blue-500 hover:bg-dark-bg transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {option}
-              {isCurrentTyping && <span className="animate-pulse">|</span>}
+              {displayText}
+              {isCurrentTyping && (
+                <span className="inline-block w-1.5 h-4 bg-green-500 ml-1 align-middle animate-pulse" />
+              )}
             </button>
           )
         })}

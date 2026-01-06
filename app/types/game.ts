@@ -30,4 +30,5 @@ export type OpenRouterResponse = {
   story: string
   location: string 
   options: string[]
+  imagePrompt?: string // 画像生成用の英語プロンプト
 }

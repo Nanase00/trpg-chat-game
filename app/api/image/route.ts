@@ -7,27 +7,41 @@ export async function POST(req: Request) {
     if (!apiKey) return NextResponse.json({ imageUrl: null });
 
     const openai = new OpenAI({ apiKey });
-    const { sceneText } = await req.json();
+    const { imagePrompt, sceneText } = await req.json();
 
-    if (!sceneText) return NextResponse.json({ imageUrl: null });
-
-    // ★品質向上のためのプロンプト修正
-    // "Anime style" だけでなく "Visual novel background" や "Concept art" を追加し、
-    // 書き込み密度(highly detailed)と光の表現(Cinematic lighting)を強化。
-    const imagePrompt = `
-      High-quality Visual Novel Background Art, Digital Concept Art, 4k Resolution.
-      Style: Makoto Shinkai inspired, atmospheric lighting, depth of field, detailed architecture, scenic, vivid colors.
-      Subject: ${sceneText.substring(0, 200)}
-      
-      Constraints: 
-      - NO humans, NO characters, NO animals (Empty scenery).
-      - STRICTLY NO TEXT, NO SIGNS, NO UI elements.
-      - Maintain a consistent, painted artistic style.
-    `.trim();
+    // imagePromptが提供されている場合はそれを使用、なければsceneTextから生成
+    let finalPrompt: string;
+    if (imagePrompt && typeof imagePrompt === 'string') {
+      // AIが生成したimagePromptを使用し、品質向上のためのプレフィックスを追加
+      finalPrompt = `
+        High-quality Visual Novel Background Art, Digital Concept Art, 4k Resolution.
+        Style: Makoto Shinkai inspired, atmospheric lighting, depth of field, detailed architecture, scenic, vivid colors.
+        ${imagePrompt}
+        
+        Constraints: 
+        - NO humans, NO characters, NO animals (Empty scenery).
+        - STRICTLY NO TEXT, NO SIGNS, NO UI elements.
+        - Maintain a consistent, painted artistic style.
+      `.trim();
+    } else if (sceneText && typeof sceneText === 'string') {
+      // フォールバック: sceneTextから生成
+      finalPrompt = `
+        High-quality Visual Novel Background Art, Digital Concept Art, 4k Resolution.
+        Style: Makoto Shinkai inspired, atmospheric lighting, depth of field, detailed architecture, scenic, vivid colors.
+        Subject: ${sceneText.substring(0, 200)}
+        
+        Constraints: 
+        - NO humans, NO characters, NO animals (Empty scenery).
+        - STRICTLY NO TEXT, NO SIGNS, NO UI elements.
+        - Maintain a consistent, painted artistic style.
+      `.trim();
+    } else {
+      return NextResponse.json({ imageUrl: null });
+    }
 
     const response = await openai.images.generate({
       model: "dall-e-3",
-      prompt: imagePrompt,
+      prompt: finalPrompt,
       n: 1,
       size: "1024x1024",
       quality: "standard", 
