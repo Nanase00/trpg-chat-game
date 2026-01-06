@@ -27,7 +27,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
   const [isUiHidden, setIsUiHidden] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<string | null>(null);
   
-  // キャッシュ
   const imageCacheRef = useRef<Record<string, string>>({});
 
   const [isLoading, setIsLoading] = useState(false)
@@ -40,14 +39,8 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
   const [displayedOptions, setDisplayedOptions] = useState<string[]>([])
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
   
-  // Refs
   const currentTableTalkIndexRef = useRef(0)
   const currentTableTalkCharIndexRef = useRef(0)
-  const currentOptionIndexRef = useRef(0)
-  const currentOptionCharIndexRef = useRef(0)
-  const tableTalkTimeoutRef = useRef<any>(null)
-  const storyTimeoutRef = useRef<any>(null)
-  const optionsTimeoutRef = useRef<any>(null)
   const isInitializedRef = useRef(false)
 
   const addMessage = useCallback((speaker: string, name: string, message: string, gender?: any) => {
@@ -60,7 +53,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     }))
   }, [])
 
-  // 画像生成関数
   const generateImageDirectly = useCallback(async (locationText: string, reason: string) => {
     if (!GAME_CONFIG.ENABLE_AI_IMAGES || !locationText) return;
 
@@ -113,36 +105,19 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
 
       const newLocation = response.location;
       const storyTitle = response.story || "";
-
-      // ★鉄壁のロックロジック (SessionStorage使用)★
       const SESSION_KEY = 'has_generated_start_image';
-      const hasGenerated = sessionStorage.getItem(SESSION_KEY);
+      const hasGenerated = typeof window !== 'undefined' ? sessionStorage.getItem(SESSION_KEY) : null;
 
-      const isEnding = storyTitle.includes('エピローグ') || 
-                       storyTitle.includes('エンディング') || 
-                       storyTitle.includes('最終話') ||
-                       storyTitle.includes('True End') ||
-                       storyTitle.includes('Game Clear');
+      const isEnding = storyTitle.includes('エピローグ') || storyTitle.includes('エンディング') || storyTitle.includes('最終話');
 
       if (newLocation) {
         if (!hasGenerated) {
-          // ★まだ生成していない（初回）
-          console.log("【画像生成: START】初回生成を実行し、ロックをかけます。");
           setCurrentLocation(newLocation);
           generateImageDirectly(newLocation, "START");
-          
-          // ★ブラウザに「生成済み」の証拠を残す
           sessionStorage.setItem(SESSION_KEY, 'true');
-
         } else if (isEnding) {
-          // ★エンディング
-          console.log("【画像生成: ENDING】エンディングのため生成します。");
           setCurrentLocation(newLocation);
           generateImageDirectly(newLocation, "ENDING");
-
-        } else {
-          // ★それ以外（ロック済み）→ 絶対に生成しない
-          console.log("【画像生成スキップ】既に初回生成済みのため、リクエストを破棄しました。");
         }
       }
 
@@ -164,8 +139,6 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       setDisplayedOptions([])
       currentTableTalkIndexRef.current = 0
       currentTableTalkCharIndexRef.current = 0
-      currentOptionIndexRef.current = 0
-      currentOptionCharIndexRef.current = 0
 
     } catch (e) {
       console.error(e)
@@ -176,8 +149,8 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     }
   }, [playerName, worldSetting, gameState.messages, isLoading, addMessage, generateImageDirectly])
 
-  // アニメーション制御
   useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
     if (animationPhase === 'tableTalk' && pendingTableTalk.length > 0) {
       const animate = () => {
         const idx = currentTableTalkIndexRef.current
@@ -188,6 +161,7 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
           setAnimationPhase('story')
           return
         }
+        // 簡易演出
         pendingTableTalk.forEach(t => addMessage(t.speaker === 'GM' ? 'gm' : 'kaito', t.speaker, t.text, t.gender))
         setPendingTableTalk([])
         setAnimationPhase('story')
@@ -196,12 +170,13 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
     } else if (animationPhase === 'story') {
       if (gameState.fieldStory) {
         setDisplayedStory(gameState.fieldStory)
-        setTimeout(() => setAnimationPhase('options'), 500)
+        timeoutId = setTimeout(() => setAnimationPhase('options'), 500)
       }
     } else if (animationPhase === 'options') {
       setDisplayedOptions(gameState.options)
-      setTimeout(() => { setAnimationPhase('done'); setShowOptions(true) }, 100)
+      timeoutId = setTimeout(() => { setAnimationPhase('done'); setShowOptions(true) }, 100)
     }
+    return () => clearTimeout(timeoutId);
   }, [animationPhase, pendingTableTalk, gameState.fieldStory, gameState.options, addMessage])
 
   const initializeGame = useCallback(async () => {
@@ -222,18 +197,16 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
   }, [])
 
   const handleReset = useCallback(() => {
-    // リセット時はブラウザの記憶（ロック）も解除する
     sessionStorage.removeItem('has_generated_start_image');
     imageCacheRef.current = {};
     setCurrentLocation(null);
     isInitializedRef.current = false;
-    
     if (onReset) onReset()
     else window.location.reload()
   }, [onReset])
 
   return (
-    <div className="h-screen flex flex-col bg-dark-bg p-4 gap-4 relative overflow-hidden">
+    <div className="h-screen flex flex-col bg-dark-bg p-2 md:p-4 gap-2 md:gap-4 relative overflow-hidden">
       {bgImageUrl && (
         <div 
           className="absolute inset-0 z-0 transition-opacity duration-1000"
@@ -247,39 +220,87 @@ export default function GameScreen({ worldSetting, playerName, onReset }: GameSc
       )}
       <div className={`absolute inset-0 bg-black/60 z-0 transition-opacity ${isUiHidden ? 'opacity-0' : 'opacity-100'}`} />
 
-      <div className="absolute top-4 right-4 z-50 flex gap-2">
+      {/* ヘッダーボタン (右上に固定) */}
+      <div className="absolute top-2 right-2 z-50 flex gap-2">
         <button 
           onMouseDown={() => setIsUiHidden(true)} 
           onMouseUp={() => setIsUiHidden(false)}
-          className="px-4 py-2 bg-gray-800 text-white rounded border border-gray-600"
+          onMouseLeave={() => setIsUiHidden(false)}
+          // スマホ用タッチイベントを追加 & コンテキストメニュー(長押しメニュー)を無効化
+          onTouchStart={(e) => { setIsUiHidden(true); }}
+          onTouchEnd={(e) => { e.preventDefault(); setIsUiHidden(false); }}
+          onContextMenu={(e) => e.preventDefault()}
+          className="px-3 py-1.5 bg-gray-800/90 text-white rounded border border-gray-600 text-xs md:text-sm shadow-lg select-none active:bg-gray-700"
         >
-          👁️ 画像を見る
+          👁️ 画像
         </button>
-        <button onClick={handleReset} className="px-4 py-2 bg-red-600 text-white rounded">
-          TOPに戻る
+        <button onClick={handleReset} className="px-3 py-1.5 bg-red-600/90 text-white rounded text-xs md:text-sm shadow-lg">
+          TOP
         </button>
       </div>
 
-      <div className={`relative z-10 flex flex-col h-full gap-4 transition-opacity ${isUiHidden ? 'opacity-0' : 'opacity-100'}`}>
-        <div className="flex justify-end mb-2 min-h-[40px]" />
+      {/* メインレイアウトエリア */}
+      <div className={`relative z-10 flex flex-col h-full gap-2 md:gap-4 transition-opacity ${isUiHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         
-        <div className="flex-[0.35] min-h-0 flex gap-4">
-          <div className="flex-[0.6]">
-            <TableTalk messages={gameState.messages} displayedTableTalk={displayedTableTalk} animationPhase={animationPhase as any} playerName={playerName} />
+        {/* スマホレイアウト対応: 
+            md:flex-row (PCは横並び)
+            flex-col (スマホは縦並び) 
+        */}
+        
+        {/* エリア1: ゲームフィールド(物語) 
+            スマホ: 上部に配置 (order-1)
+            PC: 下部に配置 (flex-[0.65]) ※元のデザイン維持のため構造変更が必要
+            元のデザイン: 上段(トーク+選択肢) / 下段(フィールド)
+            
+            ★スマホ最適化レイアウトに変更★
+            スマホ: 上(フィールド) -> 中(トーク) -> 下(選択肢)
+            PC: 左(トーク) / 右(選択肢) / 下(フィールド) というより、
+            元のコードは Flex分割でした。
+            ここではスマホで見やすいように「縦積み」にします。
+        */}
+        
+        {/* PC: 上部 (トーク & 選択肢), スマホ: コンテンツ全体を縦並びにするため構造整理 */}
+        
+        <div className="flex-1 flex flex-col md:flex-row gap-2 md:gap-4 min-h-0">
+          
+          {/* 左カラム (PC) / 中段 (スマホ): テーブルトーク */}
+          {/* スマホでは高さを確保しつつスクロールさせる */}
+          <div className="order-2 md:order-1 flex-[0.6] md:flex-[0.35] min-h-0 flex flex-col bg-black/20 rounded overflow-hidden">
+             <TableTalk messages={gameState.messages} displayedTableTalk={displayedTableTalk} animationPhase={animationPhase as any} playerName={playerName} />
           </div>
-          <div className="flex-[0.4] flex flex-col gap-4">
-             <div className={showOptions ? 'opacity-100' : 'opacity-0'}>
-               <GameOptions options={gameState.options} onSelect={o => {setShowOptions(false); handleUserInput(o)}} isLoading={isLoading} animationPhase={animationPhase} originalOptions={gameState.options} />
-             </div>
-             <div className="flex gap-2 mt-auto">
-               <input value={userInput} onChange={e => setUserInput(e.target.value)} disabled={isLoading} className="flex-1 px-4 py-2 rounded bg-gray-800 text-white" placeholder="メッセージ..." />
-               <button onClick={() => handleUserInput(userInput)} disabled={isLoading} className="px-6 py-2 bg-blue-600 rounded text-white">送信</button>
-             </div>
-          </div>
-        </div>
 
-        <div className="flex-[0.65]">
-          <GameField displayedStory={displayedStory} animationPhase={animationPhase as any} imageUrl={null} isGeneratingImage={isGeneratingImage} />
+          {/* 右カラム (PC) / 上段 (スマホ): フィールド & 選択肢 */}
+          <div className="order-1 md:order-2 flex-[0.4] md:flex-[0.65] flex flex-col gap-2 min-h-0">
+            
+            {/* 物語表示 (スマホでは一番上に見せたいのでこれを含む) */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+                <GameField displayedStory={displayedStory} animationPhase={animationPhase as any} imageUrl={null} isGeneratingImage={isGeneratingImage} />
+            </div>
+
+            {/* 下部固定エリア: 選択肢 & 入力 */}
+            <div className="mt-auto flex flex-col gap-2 p-1">
+               <div className={`${showOptions ? 'opacity-100' : 'opacity-0'} transition-opacity`}>
+                 <GameOptions options={gameState.options} onSelect={o => {setShowOptions(false); handleUserInput(o)}} isLoading={isLoading} animationPhase={animationPhase} originalOptions={gameState.options} />
+               </div>
+               
+               <div className="flex gap-2">
+                 <input 
+                    value={userInput} 
+                    onChange={e => setUserInput(e.target.value)} 
+                    disabled={isLoading} 
+                    className="flex-1 px-3 py-2 rounded bg-gray-800 text-white border border-gray-600 focus:border-blue-500 text-sm md:text-base" 
+                    placeholder="メッセージ..." 
+                 />
+                 <button 
+                    onClick={() => handleUserInput(userInput)} 
+                    disabled={isLoading} 
+                    className="px-4 py-2 bg-blue-600 rounded text-white font-bold text-sm md:text-base whitespace-nowrap"
+                 >
+                    送信
+                 </button>
+               </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
